@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pancow Live | Study Arena</title>
+    
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+    <style>
+        :root { --primary: #22c55e; --bg: #0f172a; --card: #1e293b; --text: #f8fafc; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
+        
+        body { background: var(--bg); color: var(--text); display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 20px; }
+        .container { width: 100%; max-width: 450px; }
+
+        .card { background: var(--card); padding: 25px; border-radius: 24px; box-shadow: 0 15px 35px rgba(0,0,0,0.4); text-align: center; border: 1px solid rgba(255,255,255,0.05); }
+        
+        input, select { 
+            width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 12px; 
+            border: 2px solid #334155; background: #0f172a; color: white; outline: none;
+        }
+
+        .btn { width: 100%; padding: 12px; border-radius: 12px; border: none; font-weight: 700; cursor: pointer; transition: 0.2s; }
+        .btn-main { background: var(--primary); color: white; margin-top: 10px; }
+        .btn-ghost { background: transparent; color: #94a3b8; border: 1px solid #334155; margin-top: 10px; }
+        .btn-stop { background: #ef4444; color: white; margin-top: 10px; font-size: 12px; padding: 8px; }
+
+        /* Room UI */
+        #roomArea { display: none; }
+        #timer { font-size: 60px; font-weight: 900; color: white; margin: 10px 0; }
+        
+        /* Chat Styling */
+        .chat-box { background: #0f172a; border-radius: 15px; height: 150px; overflow-y: auto; margin: 15px 0; padding: 10px; text-align: left; font-size: 13px; }
+        .msg { margin-bottom: 5px; }
+        .msg b { color: var(--primary); }
+
+        .members-box { text-align: left; margin-top: 15px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1); }
+        .member-pill { display: inline-block; background: rgba(34, 197, 94, 0.1); color: var(--primary); padding: 4px 10px; border-radius: 50px; font-size: 12px; margin: 2px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div id="lobbyArea" class="card">
+        <h2>Study Arena</h2>
+        <input type="text" id="nameInput" placeholder="Your Hero Name..." maxlength="15">
+        <select id="timeSelect">
+            <option value="25">25 Minutes</option>
+            <option value="50">50 Minutes</option>
+        </select>
+        <button class="btn btn-main" onclick="createRoom()">CREATE NEW ROOM</button>
+        <input type="text" id="joinCode" placeholder="Enter 4-digit Code" maxlength="4" style="margin-top:20px;">
+        <button class="btn btn-ghost" onclick="joinRoom()">JOIN SQUAD</button>
+    </div>
+
+    <div id="roomArea" class="card">
+        <div style="font-size: 10px; color: #64748b;">CODE: <b id="roomCodeText" style="color:var(--primary); font-size:18px;">0000</b></div>
+        
+        <div id="timer">25:00</div>
+        <button id="stopBtn" class="btn btn-stop" onclick="toggleTimer()">STOP TIMER</button>
+
+        <div class="chat-box" id="chatDisplay"></div>
+        <div style="display:flex; gap:5px;">
+            <input type="text" id="chatInput" placeholder="Say something..." style="margin-bottom:0;">
+            <button class="btn btn-main" style="width:60px; margin:0;" onclick="sendMessage()">Send</button>
+        </div>
+
+        <div style="margin-top:15px;">
+            <button class="btn btn-ghost" id="musicBtn" onclick="toggleMusic()">🎵 Play Lofi Focus</button>
+        </div>
+
+        <div class="members-box">
+            <div id="memberList"></div>
+        </div>
+
+        <button class="btn btn-ghost" style="margin-top: 15px; color: #ef4444; font-size:11px;" onclick="location.reload()">LEAVE ROOM</button>
+    </div>
+</div>
+
+<audio id="lofiPlayer" loop src="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"></audio>
+
+<script>
+    const firebaseConfig = {
+        apiKey: "AIzaSyDKvaLXC7nSM62hC_0PXx-_iXjJX_Kw7WQ",
+        authDomain: "pancow.firebaseapp.com",
+        projectId: "pancow"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    let myName = localStorage.getItem("pancow_name") || "";
+    if(myName) document.getElementById("nameInput").value = myName;
+
+    let currentRoom = "";
+    let timerActive = true;
+    let timerInterval;
+
+    async function createRoom() {
+        myName = document.getElementById("nameInput").value.trim();
+        if(!myName) return alert("Enter your name!");
+        localStorage.setItem("pancow_name", myName);
+
+        const code = Math.floor(1000 + Math.random() * 9000).toString();
+        const mins = document.getElementById("timeSelect").value;
+
+        await db.collection("study_rooms").doc(code).set({
+            host: myName,
+            duration: mins,
+            timerRunning: true,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        enterRoom(code, mins);
+    }
+
+    async function joinRoom() {
+        myName = document.getElementById("nameInput").value.trim();
+        const code = document.getElementById("joinCode").value.trim();
+        if(!myName || !code) return alert("Need name and code!");
+
+        const doc = await db.collection("study_rooms").doc(code).get();
+        if(doc.exists) enterRoom(code, doc.data().duration);
+        else alert("Room not found!");
+    }
+
+    function enterRoom(code, mins) {
+        currentRoom = code;
+        document.getElementById("lobbyArea").style.display = "none";
+        document.getElementById("roomArea").style.display = "block";
+        document.getElementById("roomCodeText").innerText = code;
+
+        const ref = db.collection("study_rooms").doc(code).collection("members").doc(myName);
+        ref.set({ name: myName, time: Date.now() });
+        window.addEventListener("beforeunload", () => ref.delete());
+
+        // Sync Timer State from DB
+        db.collection("study_rooms").doc(code).onSnapshot(doc => {
+            const data = doc.data();
+            timerActive = data.timerRunning;
+            document.getElementById("stopBtn").innerText = timerActive ? "STOP TIMER" : "RESUME TIMER";
+            document.getElementById("stopBtn").style.background = timerActive ? "#ef4444" : "#22c55e";
+        });
+
+        // Live Chat Listener
+        db.collection("study_rooms").doc(code).collection("chat")
+          .orderBy("time", "asc").onSnapshot(snap => {
+            const display = document.getElementById("chatDisplay");
+            display.innerHTML = "";
+            snap.forEach(doc => {
+                display.innerHTML += `<div class="msg"><b>${doc.data().user}:</b> ${doc.data().text}</div>`;
+            });
+            display.scrollTop = display.scrollHeight;
+        });
+
+        // Member List Listener
+        db.collection("study_rooms").doc(code).collection("members").onSnapshot(snap => {
+            const list = document.getElementById("memberList");
+            list.innerHTML = "";
+            snap.forEach(doc => { list.innerHTML += `<span class="member-pill">${doc.data().name}</span>`; });
+        });
+
+        startCountdown(mins);
+    }
+
+    function sendMessage() {
+        const input = document.getElementById("chatInput");
+        if(!input.value) return;
+        db.collection("study_rooms").doc(currentRoom).collection("chat").add({
+            user: myName,
+            text: input.value,
+            time: Date.now()
+        });
+        input.value = "";
+    }
+
+    function toggleTimer() {
+        db.collection("study_rooms").doc(currentRoom).update({
+            timerRunning: !timerActive
+        });
+    }
+
+    function toggleMusic() {
+        const player = document.getElementById("lofiPlayer");
+        const btn = document.getElementById("musicBtn");
+        if(player.paused) {
+            player.play();
+            btn.innerText = "⏸ Pause Lofi";
+        } else {
+            player.pause();
+            btn.innerText = "🎵 Play Lofi Focus";
+        }
+    }
+
+    function startCountdown(mins) {
+        let sec = mins * 60;
+        timerInterval = setInterval(() => {
+            if(timerActive && sec > 0) {
+                sec--;
+                let m = Math.floor(sec / 60);
+                let s = sec % 60;
+                document.getElementById("timer").innerText = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+            }
+        }, 1000);
+    }
+</script>
+</body>
+</html>
